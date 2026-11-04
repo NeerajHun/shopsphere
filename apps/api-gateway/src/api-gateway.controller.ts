@@ -1,5 +1,6 @@
-import { Controller, Get } from '@nestjs/common';
+import { Body, Controller, Get, Post } from '@nestjs/common';
 import { ApiGatewayService } from './api-gateway.service';
+import { CreateUserDto } from './modules/demo/dto/create-user.dto';
 
 @Controller()
 export class ApiGatewayController {
@@ -8,5 +9,12 @@ export class ApiGatewayController {
   @Get()
   getHello(): string {
     return this.apiGatewayService.getHello();
+  }
+
+  @Post('demo/users')
+  createUser(@Body() dto: CreateUserDto) {
+    return {
+      email: dto.email,
+    };
   }
 }
