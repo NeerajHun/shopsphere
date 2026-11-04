@@ -16,6 +16,14 @@
     "forceConsistentCasingInFileNames": true,
     "noImplicitAny": true,
     "strictBindCallApply": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "paths": {
+      "@common/common": [
+        "libs/common/src"
+      ],
+      "@common/common/*": [
+        "libs/common/src/*"
+      ]
+    }
   }
 }
