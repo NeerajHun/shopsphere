@@ -1,10 +1,11 @@
 import {
   ConflictException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
@@ -111,6 +112,7 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       role: user.role,
+      sid: sessionId,
     });
 
     // Generate refresh token with session ID.
@@ -211,6 +213,7 @@ export class AuthService {
         sub: session.user.id,
         email: session.user.email,
         role: session.user.role,
+        sid: session.id,
       });
 
       const newRefreshToken = await this.jwtService.signAsync(
@@ -288,6 +291,78 @@ export class AuthService {
       await sessionRepository.save(session);
 
       return { message: 'Logged out successfully' };
+    });
+  }
+
+  async getActiveSessions(userId: string, currentSessionId: string) {
+    const sessions = await this.sessionRepository.find({
+      where: {
+        userId,
+        revokedAt: IsNull(),
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+    });
+
+    return sessions
+      .filter((session) => session.expiresAt.getTime() > Date.now())
+      .map((session) => ({
+        id: session.id,
+        userAgent: session.userAgent,
+        ipAddress: session.ipAddress,
+        createdAt: session.createdAt,
+        lastUsedAt: session.lastUsedAt,
+        expiresAt: session.expiresAt,
+        current: session.id === currentSessionId,
+      }));
+  }
+
+  async revokeSession(userId: string, sessionId: string) {
+    return this.sessionRepository.manager.transaction(async (manager) => {
+      const sessionRepository = manager.getRepository(UserSession);
+
+      const session = await sessionRepository
+        .createQueryBuilder('session')
+        .where('session.id = :sessionId', { sessionId })
+        .andWhere('session.userId = :userId', { userId })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!session) {
+        throw new NotFoundException('Session not found');
+      }
+
+      if (session.revokedAt) {
+        return { message: 'Session already revoked' };
+      }
+
+      session.revokedAt = new Date();
+
+      await sessionRepository.save(session);
+
+      return { message: 'Session revoked successfully' };
+    });
+  }
+
+  async revokeAllSessions(userId: string) {
+    return this.sessionRepository.manager.transaction(async (manager) => {
+      const sessionRepository = manager.getRepository(UserSession);
+
+      const result = await sessionRepository.update(
+        {
+          userId,
+          revokedAt: IsNull(),
+        },
+        {
+          revokedAt: new Date(),
+        },
+      );
+
+      return {
+        message: 'Logged out from all devices successfully',
+        revokedCount: result.affected ?? 0,
+      };
     });
   }
 }

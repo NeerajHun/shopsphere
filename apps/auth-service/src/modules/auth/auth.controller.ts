@@ -1,9 +1,12 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
+  Param,
+  ParseUUIDPipe,
   Post,
   Req,
   UseGuards,
@@ -24,6 +27,7 @@ interface AuthenticatedRequest {
     id: string;
     email: string;
     role: string;
+    sessionId: string;
   };
 }
 
@@ -74,5 +78,29 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   logout(@Body() dto: LogoutDto) {
     return this.authService.logout(dto.refreshToken);
+  }
+
+  @Get('sessions')
+  @UseGuards(JwtAuthGuard)
+  async getSessions(@Req() request: AuthenticatedRequest) {
+    return this.authService.getActiveSessions(
+      request.user.id,
+      request.user.sessionId,
+    );
+  }
+
+  @Delete('sessions/:sessionId')
+  @UseGuards(JwtAuthGuard)
+  async revokeSession(
+    @Req() request: AuthenticatedRequest,
+    @Param('sessionId', new ParseUUIDPipe()) sessionId: string,
+  ) {
+    return this.authService.revokeSession(request.user.id, sessionId);
+  }
+
+  @Delete('sessions')
+  @UseGuards(JwtAuthGuard)
+  async revokeAllSessions(@Req() request: AuthenticatedRequest) {
+    return this.authService.revokeAllSessions(request.user.id);
   }
 }
