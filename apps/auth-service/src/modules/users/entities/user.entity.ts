@@ -42,6 +42,12 @@ export class User {
   @Column({ type: 'boolean', default: true })
   isActive: boolean;
 
+  @Column({ type: 'integer', default: 0 })
+  failedLoginAttempts: number;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  lockedUntil: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

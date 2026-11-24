@@ -83,79 +83,121 @@ export class AuthService {
   ) {
     const email = dto.email.trim().toLowerCase();
 
-    // Password has select: false, so explicitly select it.
-    const user = await this.userRepository
-      .createQueryBuilder('user')
-      .addSelect('user.password')
-      .where('user.email = :email', { email })
-      .getOne();
+    const result = await this.userRepository.manager.transaction(
+      async (manager) => {
+        const userRepository = manager.getRepository(User);
 
-    if (!user) {
-      throw new UnauthorizedException('Invalid email or password');
-    }
+        // Lock this user's row until the transaction completes.
+        const user = await userRepository
+          .createQueryBuilder('user')
+          .setLock('pessimistic_write')
+          .addSelect('user.password')
+          .where('user.email = :email', { email })
+          .getOne();
 
-    const passwordMatches = await bcrypt.compare(dto.password, user.password);
+        if (!user || !user.isActive) {
+          return { success: false as const };
+        }
 
-    if (!passwordMatches) {
-      throw new UnauthorizedException('Invalid email or password');
-    }
+        const now = new Date();
 
-    if (!user.isActive) {
-      throw new UnauthorizedException('Account is inactive');
-    }
+        // Reject login while the account is locked.
+        if (user.lockedUntil && user.lockedUntil > now) {
+          return { success: false as const };
+        }
 
-    // Generate a unique session ID.
-    const sessionId = randomUUID();
+        // Reset expired lockout.
+        if (user.lockedUntil && user.lockedUntil <= now) {
+          user.failedLoginAttempts = 0;
+          user.lockedUntil = null;
+        }
 
-    // Generate access token.
-    const accessToken = await this.jwtService.signAsync({
-      sub: user.id,
-      email: user.email,
-      role: user.role,
-      sid: sessionId,
-    });
+        const passwordMatches = await bcrypt.compare(
+          dto.password,
+          user.password,
+        );
 
-    // Generate refresh token with session ID.
-    const refreshToken = await this.jwtService.signAsync(
-      {
-        sub: user.id,
-        email: user.email,
-        tokenUse: 'refresh',
-        sid: sessionId,
-      },
-      {
-        secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
-        expiresIn: '7d',
+        if (!passwordMatches) {
+          user.failedLoginAttempts += 1;
+
+          if (user.failedLoginAttempts >= 5) {
+            user.lockedUntil = new Date(Date.now() + 15 * 60 * 1000);
+          }
+
+          await userRepository.save(user);
+
+          return { success: false as const };
+        }
+
+        // Successful login: reset failed attempts.
+        user.failedLoginAttempts = 0;
+        user.lockedUntil = null;
+
+        const sessionId = randomUUID();
+
+        const accessToken = await this.jwtService.signAsync({
+          sub: user.id,
+          email: user.email,
+          role: user.role,
+          sid: sessionId,
+        });
+
+        const refreshToken = await this.jwtService.signAsync(
+          {
+            sub: user.id,
+            email: user.email,
+            tokenUse: 'refresh',
+            sid: sessionId,
+          },
+          {
+            secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
+            expiresIn: '7d',
+          },
+        );
+
+        // Create the session using the transaction manager.
+        const sessionRepository = manager.getRepository(UserSession);
+
+        const session = sessionRepository.create({
+          id: sessionId,
+          userId: user.id,
+          refreshTokenHash: this.hashToken(refreshToken),
+          expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          lastUsedAt: new Date(),
+          userAgent: metadata?.userAgent ?? null,
+          ipAddress: metadata?.ipAddress ?? null,
+        });
+
+        await userRepository.save(user);
+        await sessionRepository.save(session);
+
+        return {
+          success: true as const,
+          accessToken,
+          refreshToken,
+          user: {
+            id: user.id,
+            email: user.email,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            role: user.role,
+          },
+        };
       },
     );
 
-    // Store session information.
-    const session = this.sessionRepository.create({
-      id: sessionId,
-      userId: user.id,
-      refreshTokenHash: this.hashToken(refreshToken),
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      lastUsedAt: new Date(),
-      userAgent: metadata?.userAgent ?? null,
-      ipAddress: metadata?.ipAddress ?? null,
-    });
+    // Throw outside the transaction so failed-attempt updates commit.
+    if (!result.success) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
 
-    await this.sessionRepository.save(session);
-
-    // Return tokens.
     return {
-      accessToken,
-      refreshToken,
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
       tokenType: 'Bearer',
       expiresIn: '15m',
       refreshExpiresIn: '7d',
-      user: {
-        id: user.id,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        role: user.role,
-      },
+      user: result.user,
     };
   }
 
@@ -222,6 +264,7 @@ export class AuthService {
           email: session.user.email,
           tokenUse: 'refresh',
           sid: session.id,
+          jti: randomUUID(),
         },
         {
           secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),

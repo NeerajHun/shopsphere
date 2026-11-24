@@ -21,6 +21,7 @@ import { Roles } from './decorators/roles.decorator';
 import { UserRole } from '../users/entities/user.entity';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { LogoutDto } from './dto/logout.dto';
+import { Throttle } from '@nestjs/throttler';
 
 interface AuthenticatedRequest {
   user: {
@@ -37,12 +38,14 @@ export class AuthController {
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
+  @Throttle({ default: { limit: 3, ttl: 60000 } })
   register(@Body() dto: RegisterDto, @Req() request: Request) {
     return this.authService.register(dto);
   }
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
   login(@Body() dto: LoginDto, @Req() request: Request) {
     return this.authService.login(dto, {
       userAgent: request.get('user-agent') ?? null,
@@ -70,6 +73,7 @@ export class AuthController {
 
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   refresh(@Body() dto: RefreshTokenDto) {
     return this.authService.refresh(dto.refreshToken);
   }
