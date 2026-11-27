@@ -46,6 +46,15 @@
         "tsConfigPath": "libs/contracts/tsconfig.lib.json"
       }
     },
+    "product-service": {
+      "type": "application",
+      "root": "apps/product-service",
+      "entryFile": "main",
+      "sourceRoot": "apps/product-service/src",
+      "compilerOptions": {
+        "tsConfigPath": "apps/product-service/tsconfig.app.json"
+      }
+    },
     "shopsphere": {
       "type": "application",
       "root": "apps/shopsphere",
